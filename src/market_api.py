@@ -241,15 +241,16 @@ class KalshiClient:
             print(f"Error fetching portfolio: {e}")
             return None
     
-    def place_order(self, market_ticker: str, side: str, action: str, 
-                   count: int, price: int, order_type: str = "limit") -> Optional[Dict]:
+    def place_order(self, market_ticker: str, side: str, action: str,
+                   count: int, price: int, order_type: str = "limit",
+                   time_in_force: str = "ioc") -> Optional[Dict]:
         """
         Submit a trading order to the Kalshi exchange.
-        
+
         Places either a limit or market order for the specified market. Limit orders
         provide price protection but may not execute immediately, while market orders
         execute instantly at current market prices.
-        
+
         Args:
             market_ticker: Unique market identifier
             side: Contract side - 'yes' or 'no'
@@ -257,7 +258,9 @@ class KalshiClient:
             count: Number of contracts to trade
             price: Limit price in cents (0-100), ignored for market orders
             order_type: 'limit' for price-protected orders, 'market' for immediate execution
-        
+            time_in_force: Order duration - 'ioc' (immediate or cancel), 'gtc' (good til cancelled),
+                          'fok' (fill or kill). Default 'ioc' for arbitrage safety.
+
         Returns:
             Order confirmation dictionary with order details, None on error
         """
@@ -268,11 +271,60 @@ class KalshiClient:
                 "action": action,
                 "count": count,
                 "price": price,
-                "type": order_type
+                "type": order_type,
+                "time_in_force": time_in_force
             }
             response = self._make_request("POST", "/portfolio/orders", json=payload)
             return response
         except Exception as e:
             print(f"Error placing order: {e}")
             return None
+
+    def get_order_status(self, order_id: str) -> Optional[Dict]:
+        """
+        Check the status of a specific order.
+
+        Args:
+            order_id: Unique order identifier returned from place_order
+
+        Returns:
+            Order status dictionary including fill information, None on error
+        """
+        try:
+            response = self._make_request("GET", f"/portfolio/orders/{order_id}")
+            return response
+        except Exception as e:
+            print(f"Error fetching order status: {e}")
+            return None
+
+    def cancel_order(self, order_id: str) -> bool:
+        """
+        Cancel an existing order.
+
+        Args:
+            order_id: Unique order identifier to cancel
+
+        Returns:
+            True if cancellation successful, False otherwise
+        """
+        try:
+            response = self._make_request("DELETE", f"/portfolio/orders/{order_id}")
+            return True
+        except Exception as e:
+            print(f"Error canceling order {order_id}: {e}")
+            return False
+
+    def get_open_orders(self) -> List[Dict]:
+        """
+        Retrieve all currently open orders.
+
+        Returns:
+            List of open order dictionaries, empty list on error
+        """
+        try:
+            response = self._make_request("GET", "/portfolio/orders")
+            return response.get("orders", [])
+        except Exception as e:
+            print(f"Error fetching open orders: {e}")
+            return []
 

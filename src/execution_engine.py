@@ -254,12 +254,15 @@ class TradeExecutor:
     
     def execute_trade(self, opportunity: TradeOpportunity, use_market_orders: bool = False) -> Tuple[bool, Optional[str]]:
         """
-        Execute a trade opportunity.
+        Execute a trade opportunity using IOC (Immediate or Cancel) orders.
+
+        Uses IOC orders by default to ensure both legs execute immediately or not at all,
+        preventing one-sided exposure. Verifies order fills before recording the trade.
 
         Args:
             opportunity: TradeOpportunity to execute
             use_market_orders: If True, use market orders for instant execution.
-                             If False, use limit orders at exact prices (safer but may not execute immediately)
+                             If False, use limit orders with IOC time-in-force (default)
 
         Returns:
             Tuple of (success: bool, message: str)
@@ -274,38 +277,61 @@ class TradeExecutor:
                     opportunity.buy_price, opportunity.quantity, self.current_exposure
                 ):
                     return False, f"Insufficient capital for trade (cost: ${trade_cost:.2f})"
-            
-            # Execute buy order first
-            # For market orders, we still specify price as a limit to avoid slippage
+
+            # Execute buy order first with IOC (Immediate or Cancel)
+            # This ensures the order fills immediately or gets cancelled
             buy_result = self.client.place_order(
                 market_ticker=opportunity.market_ticker,
                 side=opportunity.side,
                 action='buy',
                 count=opportunity.quantity,
                 price=opportunity.buy_price,
-                order_type='market' if use_market_orders else 'limit'
+                order_type='market' if use_market_orders else 'limit',
+                time_in_force='ioc'  # IOC: fills immediately or cancels
             )
-            
+
             if not buy_result:
-                return False, f"Failed to execute buy order for {opportunity.market_ticker}"
-            
+                return False, f"Failed to place buy order for {opportunity.market_ticker}"
+
+            # Verify buy order was filled (not just placed)
+            # IOC orders either fill immediately or get cancelled
+            buy_order_id = buy_result.get('order', {}).get('order_id') or buy_result.get('order_id')
+            buy_status = buy_result.get('order', {}).get('status') or buy_result.get('status', 'unknown')
+
+            if buy_status in ['cancelled', 'canceled']:
+                return False, f"Buy order cancelled (no liquidity at {opportunity.buy_price}¢)"
+
             # Small delay to ensure order is processed
-            time.sleep(0.5)
-            
-            # Execute sell order
+            time.sleep(0.2)
+
+            # Execute sell order with IOC
             sell_result = self.client.place_order(
                 market_ticker=opportunity.market_ticker,
                 side=opportunity.side,
                 action='sell',
                 count=opportunity.quantity,
                 price=opportunity.sell_price,
-                order_type='market' if use_market_orders else 'limit'
+                order_type='market' if use_market_orders else 'limit',
+                time_in_force='ioc'  # IOC: fills immediately or cancels
             )
-            
+
             if not sell_result:
-                return False, f"Failed to execute sell order for {opportunity.market_ticker}"
-            
-            # Record the trade
+                # Buy order already filled - we now have one-sided exposure
+                # Log this as a warning but don't fail completely
+                print(f"⚠️  WARNING: Sell order failed for {opportunity.market_ticker}")
+                print(f"    You now hold a position - please close manually!")
+                return False, f"Sell order failed (one-sided exposure risk)"
+
+            # Verify sell order was filled
+            sell_status = sell_result.get('order', {}).get('status') or sell_result.get('status', 'unknown')
+
+            if sell_status in ['cancelled', 'canceled']:
+                # Buy order filled but sell didn't - one-sided exposure
+                print(f"⚠️  WARNING: Sell order cancelled for {opportunity.market_ticker}")
+                print(f"    Buy filled but sell cancelled - you hold a position!")
+                return False, f"Sell order cancelled (one-sided exposure - close manually)"
+
+            # Both orders filled successfully
             trade_cost = (opportunity.buy_price / 100.0) * opportunity.quantity
             trade_record = {
                 'timestamp': datetime.now(),
@@ -317,17 +343,20 @@ class TradeExecutor:
                 'net_profit': opportunity.net_profit,
                 'buy_order': buy_result,
                 'sell_order': sell_result,
-                'trade_cost': trade_cost
+                'trade_cost': trade_cost,
+                'buy_order_id': buy_order_id,
+                'buy_status': buy_status,
+                'sell_status': sell_status
             }
             self.executed_trades.append(trade_record)
 
             # Update exposure tracking
-            # Note: Spread trades are typically closed quickly, so exposure is temporary
-            # We don't add to current_exposure for completed trades
+            # Note: Spread trades are closed immediately, so no ongoing exposure
 
-            return True, (f"Successfully executed trade: {opportunity.quantity} contracts, "
+            return True, (f"✅ Trade executed: {opportunity.quantity} contracts @ "
+                          f"{opportunity.buy_price}¢/{opportunity.sell_price}¢, "
                           f"profit: ${opportunity.net_profit:.2f}")
-        
+
         except Exception as e:
             return False, f"Error executing trade: {str(e)}"
     

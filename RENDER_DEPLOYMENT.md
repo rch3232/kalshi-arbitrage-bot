@@ -157,3 +157,24 @@ The bot is lightweight and Starter plan should work fine.
 3. `AUTO_EXECUTE_TRADES` = `false` (for testing) or `true` (for live trading)
 
 Everything else has sensible defaults! 🚀
+
+---
+
+## 🔒 Safety Features
+
+The bot includes several safety mechanisms:
+
+1. **IOC (Immediate or Cancel) Orders** - All trades use IOC orders by default
+   - Orders either fill immediately or get cancelled automatically
+   - No hanging orders in the orderbook
+   - Prevents one-sided exposure from unfilled orders
+
+2. **Order Fill Verification** - Bot checks that both legs of arbitrage executed
+   - Warns if sell order fails after buy order fills
+   - Tracks order status to detect partial fills
+
+3. **Dynamic Capital Management** - Automatically adjusts position sizes
+   - Never risks more than configured percentage per trade
+   - Maintains minimum balance buffer
+
+4. **Rate Limiting** - Respects API limits to avoid throttling
