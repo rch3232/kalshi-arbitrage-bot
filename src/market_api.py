@@ -102,7 +102,7 @@ class KalshiClient:
 
             config = Configuration(
                 host=self.base_url,
-                api_key_id=self.api_key,
+                api_key=self.api_key,  # Changed from api_key_id to api_key
                 private_key_pem=private_key
             )
             self.sdk_client = SDKClient(config)
