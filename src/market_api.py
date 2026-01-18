@@ -100,12 +100,13 @@ class KalshiClient:
             print(f"   API Key ID: {self.api_key[:10]}...")
             print(f"   Private Key: {len(private_key)} chars, {private_key.count(chr(10))} lines")
 
-            config = Configuration(
-                host=self.base_url,
-                api_key=self.api_key,
-                private_key=private_key
+            # Initialize client directly without Configuration object
+            # The SDK handles configuration internally
+            self.sdk_client = SDKClient(
+                key_id=self.api_key,
+                private_key=private_key,
+                host=self.base_url
             )
-            self.sdk_client = SDKClient(config)
             self.use_sdk = True
             print("✅ Kalshi SDK client created successfully")
 
