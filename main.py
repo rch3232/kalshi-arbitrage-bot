@@ -28,6 +28,7 @@ from dotenv import load_dotenv
 from src.market_api import KalshiClient
 from src.opportunity_analyzer import ArbitrageAnalyzer, ArbitrageOpportunity
 from src.execution_engine import TradeExecutor, TradeOpportunity
+from src.capital_manager import CapitalManager
 
 load_dotenv()
 
@@ -51,25 +52,38 @@ class KalshiArbitrageBot:
     def __init__(self, auto_execute_trades: bool = False):
         """
         Initialize the bot.
-        
+
         Args:
             auto_execute_trades: If True, automatically execute profitable trades
         """
         # Initialize API client
         self.client = KalshiClient()
-        
+
+        # Initialize capital manager for dynamic position sizing
+        self.capital_manager = CapitalManager(
+            client=self.client,
+            max_capital_per_trade_pct=float(os.getenv("MAX_CAPITAL_PER_TRADE_PCT", "0.05")),
+            max_total_exposure_pct=float(os.getenv("MAX_TOTAL_EXPOSURE_PCT", "0.30")),
+            min_balance_buffer=float(os.getenv("MIN_BALANCE_BUFFER", "100.0"))
+        )
+
         # Initialize analyzers
         self.arbitrage_analyzer = ArbitrageAnalyzer()
         self.trade_executor = TradeExecutor(
             client=self.client,
+            capital_manager=self.capital_manager,
             min_profit_cents=int(os.getenv("MIN_PROFIT_CENTS", "2")),
             max_position_size=int(os.getenv("MAX_POSITION_SIZE", "1000")),
             auto_execute=auto_execute_trades
         )
-        
+
         # Configuration from environment variables with sensible defaults
         self.min_profit_per_day = float(os.getenv("MIN_PROFIT_PER_DAY", "0.1"))  # Minimum $0.10 profit per day
         self.min_liquidity = int(os.getenv("MIN_LIQUIDITY", "10000"))  # Minimum $100.00 liquidity
+
+        # Display capital status on startup
+        if os.getenv("SHOW_CAPITAL_STATUS", "true").lower() == "true":
+            self.capital_manager.display_capital_status()
     
     def filter_markets_by_liquidity(self, markets: List[Dict]) -> List[Dict]:
         """

@@ -1,0 +1,71 @@
+services:
+  # Background Worker - Continuous trading bot
+  - type: worker
+    name: kalshi-arbitrage-worker
+    runtime: python
+    plan: starter  # You can upgrade to standard or pro for better performance
+    buildCommand: pip install -r requirements.txt
+    startCommand: python worker.py
+
+    # Environment variables (set these in Render dashboard)
+    envVars:
+      # Kalshi API Credentials (REQUIRED - set in Render dashboard)
+      - key: KALSHI_API_KEY
+        sync: false  # Set manually in dashboard
+      - key: KALSHI_API_SECRET
+        sync: false  # Set manually in dashboard
+
+      # Kalshi API Configuration
+      - key: KALSHI_API_BASE_URL
+        value: https://api.elections.kalshi.com/trade-api/v2
+
+      # Capital Management (Dynamic position sizing based on your balance)
+      - key: MAX_CAPITAL_PER_TRADE_PCT
+        value: "0.05"  # Risk 5% of capital per trade
+      - key: MAX_TOTAL_EXPOSURE_PCT
+        value: "0.30"  # Max 30% of capital exposed at once
+      - key: MIN_BALANCE_BUFFER
+        value: "100.0"  # Keep $100 buffer
+
+      # Trading Configuration
+      - key: AUTO_EXECUTE_TRADES
+        value: "true"  # Set to "false" to scan only without executing
+      - key: MIN_PROFIT_CENTS
+        value: "2"  # Minimum 2¢ profit per contract
+      - key: MAX_POSITION_SIZE
+        value: "1000"  # Max contracts per trade
+      - key: MIN_LIQUIDITY
+        value: "10000"  # $100 minimum liquidity
+      - key: MIN_PROFIT_PER_DAY
+        value: "0.1"  # $0.10 minimum daily profit for arbitrage
+
+      # Scanning Configuration (Maximize market coverage)
+      - key: MARKET_SCAN_LIMIT
+        value: "1000"  # Scan up to 1000 markets per iteration
+      - key: SCAN_INTERVAL_SECONDS
+        value: "300"  # Scan every 5 minutes (300 seconds)
+
+      # API Rate Limiting
+      - key: API_MIN_INTERVAL
+        value: "0.1"  # 100ms between API requests
+
+      # Display Configuration
+      - key: SHOW_CAPITAL_STATUS
+        value: "true"  # Show capital status on startup
+
+    # Health check (optional)
+    healthCheckPath: /health
+
+    # Auto-deploy on git push
+    autoDeploy: true
+
+    # Region (choose closest to you)
+    region: oregon  # Options: oregon, ohio, frankfurt, singapore
+
+    # Instance specifications
+    numInstances: 1  # Run one worker instance
+
+    # Scaling configuration
+    scaling:
+      minInstances: 1
+      maxInstances: 1

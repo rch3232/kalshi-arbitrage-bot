@@ -20,10 +20,13 @@ The Kalshi Arbitrage Trading Bot is a professional-grade Python application that
 
 ### 💼 **Professional Features**
 - **Interactive Menu System**: User-friendly interface with arrow key navigation (no command-line arguments needed!)
+- **Dynamic Capital Management**: Automatically adjusts trade sizes based on your Kalshi balance
+- **Maximum Market Coverage**: Scans up to 1000 markets per iteration for comprehensive opportunity detection
 - **Intelligent Fee Calculation**: Accurate cost analysis ensuring realistic profit projections
 - **Automated Execution**: Optional automatic trade execution with comprehensive safety controls
 - **Continuous Monitoring**: Long-term market surveillance with customizable scan intervals
 - **Risk Management**: Built-in position sizing, liquidity filtering, and profit thresholds
+- **Cloud Deployment Ready**: Pre-configured for one-click deployment on Render
 
 ### 🛡️ **Production-Ready**
 - **Robust Error Handling**: Graceful handling of API failures, rate limits, and network issues
@@ -81,6 +84,50 @@ The Kalshi Arbitrage Trading Bot is a professional-grade Python application that
    ```bash
    python main.py
    ```
+
+---
+
+## 🚀 Cloud Deployment (Render)
+
+Deploy the bot as a 24/7 background worker on Render with automatic capital management:
+
+### Quick Deploy to Render
+
+1. **Fork or push this repository to GitHub**
+
+2. **Create a Render account** at [render.com](https://render.com)
+
+3. **Create a new Background Worker**:
+   - Click "New +" → "Background Worker"
+   - Connect your GitHub repository
+   - Render will auto-detect the `render.yaml` configuration
+
+4. **Configure Environment Variables** in Render Dashboard:
+   - `KALSHI_API_KEY` - Your Kalshi API Key ID
+   - `KALSHI_API_SECRET` - Your Kalshi Private Key
+   - `AUTO_EXECUTE_TRADES` - Set to `true` to enable auto-trading
+   - All other variables have sensible defaults in `render.yaml`
+
+5. **Deploy!**
+   - Click "Create Background Worker"
+   - The bot will start running continuously
+   - View logs in the Render dashboard
+
+### Key Configuration for Deployment
+
+The bot is configured to:
+- ✅ **Scan 1000 markets** every 5 minutes (maximum coverage)
+- ✅ **Auto-size trades** based on your Kalshi balance (5% per trade, 30% total exposure)
+- ✅ **Run 24/7** with automatic restart on errors
+- ✅ **Maintain $100 balance buffer** for safety
+
+### Local Testing Before Deployment
+
+Test the worker locally before deploying:
+```bash
+# Set AUTO_EXECUTE_TRADES=false for dry-run testing
+python worker.py
+```
 
 ---
 
@@ -191,7 +238,9 @@ The codebase follows a clean, modular architecture with clear separation of conc
 ### Core Modules
 
 - **`main.py`** - Main orchestration layer with interactive menu system
+- **`worker.py`** - Background worker for continuous 24/7 operation (cloud deployment)
 - **`src/market_api.py`** - Professional API client with rate limiting and error handling
+- **`src/capital_manager.py`** - Dynamic position sizing based on portfolio balance
 - **`src/opportunity_analyzer.py`** - Advanced market analysis for probability arbitrage detection
 - **`src/execution_engine.py`** - Orderbook analysis and trade execution system
 - **`src/cost_calculator.py`** - Comprehensive fee calculation engine
@@ -279,15 +328,34 @@ Recommended Trades:
 
 You can customize the bot's behavior by editing your `.env` file:
 
+#### Required Credentials
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `KALSHI_API_KEY` | Your Kalshi API Key ID | Required |
 | `KALSHI_API_SECRET` | Your Kalshi Private Key | Required |
 | `KALSHI_API_BASE_URL` | Kalshi API endpoint | `https://api.elections.kalshi.com/trade-api/v2` |
+
+#### Capital Management (NEW)
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `MAX_CAPITAL_PER_TRADE_PCT` | Max % of capital per trade | `0.05` (5%) |
+| `MAX_TOTAL_EXPOSURE_PCT` | Max % of capital exposed total | `0.30` (30%) |
+| `MIN_BALANCE_BUFFER` | Minimum balance buffer | `100.0` ($100) |
+
+#### Trading Configuration
+| Variable | Description | Default |
+|----------|-------------|---------|
 | `MIN_PROFIT_PER_DAY` | Minimum profit per day for arbitrage | `0.1` ($0.10) |
 | `MAX_POSITION_SIZE` | Maximum contracts per trade | `1000` |
 | `MIN_PROFIT_CENTS` | Minimum profit in cents per contract | `2` |
 | `MIN_LIQUIDITY` | Minimum liquidity in cents | `10000` ($100) |
+
+#### Background Worker Configuration
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `AUTO_EXECUTE_TRADES` | Enable auto-trading | `false` |
+| `MARKET_SCAN_LIMIT` | Markets to scan per iteration | `1000` |
+| `SCAN_INTERVAL_SECONDS` | Time between scans | `300` (5 min) |
 
 ### Smart Defaults
 

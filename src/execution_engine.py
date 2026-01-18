@@ -61,22 +61,26 @@ class TradeExecutor:
     and position sizing controls.
     """
     
-    def __init__(self, client: KalshiClient, min_profit_cents: int = 2, 
-                 max_position_size: int = 1000, auto_execute: bool = False):
+    def __init__(self, client: KalshiClient, capital_manager=None,
+                 min_profit_cents: int = 2, max_position_size: int = 1000,
+                 auto_execute: bool = False):
         """
         Initialize the trade executor.
-        
+
         Args:
             client: KalshiClient instance for API calls
+            capital_manager: Optional CapitalManager for dynamic position sizing
             min_profit_cents: Minimum profit in cents per contract to execute
             max_position_size: Maximum number of contracts per trade
             auto_execute: If True, automatically execute trades without confirmation
         """
         self.client = client
+        self.capital_manager = capital_manager
         self.min_profit_cents = min_profit_cents
         self.max_position_size = max_position_size
         self.auto_execute = auto_execute
         self.executed_trades = []
+        self.current_exposure = 0.0  # Track total exposure for capital management
     
     def analyze_orderbook_spread(self, market_data: Dict, 
                                   orderbook: Optional[Dict] = None) -> List[TradeOpportunity]:
@@ -106,8 +110,12 @@ class TradeExecutor:
             spread = yes_bid - yes_ask
             if spread >= self.min_profit_cents:
                 # Calculate maximum quantity we can trade
-                # This would ideally come from orderbook depth, but we'll use a conservative estimate
-                quantity = min(self.max_position_size, 100)  # Start conservative
+                # Use capital manager for dynamic position sizing if available
+                if self.capital_manager:
+                    quantity = self.capital_manager.get_max_position_size(yes_ask, self.current_exposure)
+                    quantity = min(quantity, self.max_position_size, 100)
+                else:
+                    quantity = min(self.max_position_size, 100)  # Start conservative
                 
                 # Calculate profit
                 gross_profit_per_contract = spread / 100.0  # Convert cents to dollars
@@ -136,7 +144,12 @@ class TradeExecutor:
         if no_ask is not None and no_bid is not None:
             spread = no_bid - no_ask
             if spread >= self.min_profit_cents:
-                quantity = min(self.max_position_size, 100)  # Start conservative
+                # Use capital manager for dynamic position sizing if available
+                if self.capital_manager:
+                    quantity = self.capital_manager.get_max_position_size(no_ask, self.current_exposure)
+                    quantity = min(quantity, self.max_position_size, 100)
+                else:
+                    quantity = min(self.max_position_size, 100)  # Start conservative
                 
                 gross_profit_per_contract = spread / 100.0
                 gross_profit = gross_profit_per_contract * quantity
@@ -242,17 +255,25 @@ class TradeExecutor:
     def execute_trade(self, opportunity: TradeOpportunity, use_market_orders: bool = False) -> Tuple[bool, Optional[str]]:
         """
         Execute a trade opportunity.
-        
+
         Args:
             opportunity: TradeOpportunity to execute
             use_market_orders: If True, use market orders for instant execution.
                              If False, use limit orders at exact prices (safer but may not execute immediately)
-        
+
         Returns:
             Tuple of (success: bool, message: str)
         """
         try:
             import time
+
+            # Verify we can afford the trade with capital manager
+            if self.capital_manager:
+                trade_cost = (opportunity.buy_price / 100.0) * opportunity.quantity
+                if not self.capital_manager.can_afford_trade(
+                    opportunity.buy_price, opportunity.quantity, self.current_exposure
+                ):
+                    return False, f"Insufficient capital for trade (cost: ${trade_cost:.2f})"
             
             # Execute buy order first
             # For market orders, we still specify price as a limit to avoid slippage
@@ -285,6 +306,7 @@ class TradeExecutor:
                 return False, f"Failed to execute sell order for {opportunity.market_ticker}"
             
             # Record the trade
+            trade_cost = (opportunity.buy_price / 100.0) * opportunity.quantity
             trade_record = {
                 'timestamp': datetime.now(),
                 'market_ticker': opportunity.market_ticker,
@@ -294,10 +316,15 @@ class TradeExecutor:
                 'quantity': opportunity.quantity,
                 'net_profit': opportunity.net_profit,
                 'buy_order': buy_result,
-                'sell_order': sell_result
+                'sell_order': sell_result,
+                'trade_cost': trade_cost
             }
             self.executed_trades.append(trade_record)
-            
+
+            # Update exposure tracking
+            # Note: Spread trades are typically closed quickly, so exposure is temporary
+            # We don't add to current_exposure for completed trades
+
             return True, (f"Successfully executed trade: {opportunity.quantity} contracts, "
                           f"profit: ${opportunity.net_profit:.2f}")
         
