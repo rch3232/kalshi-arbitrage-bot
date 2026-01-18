@@ -275,7 +275,7 @@ class ArbitrageAnalyzer:
             )
         
         except Exception as e:
-            print(f"Error analyzing market {market_data.get('ticker', 'unknown')}: {e}")
+            print(f"Error analyzing market {safe_get(market_data, 'ticker', 'unknown')}: {e}")
             return None
     
     def find_opportunities(self, markets: List[Dict], 
