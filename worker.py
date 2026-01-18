@@ -129,27 +129,6 @@ class BackgroundWorker:
                 print("No markets found or API error.")
                 return [], [], 0
 
-            # DEBUG: Show first market's properties to verify correct attribute names
-            if markets and len(markets) > 0:
-                first_market = markets[0]
-                print(f"\n🔍 DEBUG: First market type: {type(first_market)}")
-                print(f"🔍 DEBUG: First market object: {first_market}")
-                if hasattr(first_market, '__dict__'):
-                    print(f"🔍 DEBUG: First market attributes: {list(vars(first_market).keys())}")
-                elif isinstance(first_market, dict):
-                    print(f"🔍 DEBUG: First market keys: {list(first_market.keys())}")
-
-                # Try to access various possible property names
-                print(f"🔍 DEBUG: Trying different property names:")
-                for prop in ['ticker', 'liquidity', 'yes_bid', 'yes_ask', 'no_bid', 'no_ask',
-                            'yes_sub_title', 'no_sub_title', 'volume', 'open_interest']:
-                    try:
-                        value = safe_get(first_market, prop, 'N/A')
-                        print(f"   • {prop}: {value}")
-                    except Exception as e:
-                        print(f"   • {prop}: ERROR - {e}")
-                print()
-
             # Filter by liquidity
             original_count = len(markets)
             markets = self.filter_markets_by_liquidity(markets)
