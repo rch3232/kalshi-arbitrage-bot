@@ -23,7 +23,7 @@ services:
 
       # Kalshi API Configuration
       - key: KALSHI_API_BASE_URL
-        value: https://trading-api.kalshi.com/trade-api/v2
+        value: https://api.elections.kalshi.com/trade-api/v2
 
       # Capital Management (Dynamic position sizing based on your balance)
       - key: MAX_CAPITAL_PER_TRADE_PCT
