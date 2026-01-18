@@ -59,28 +59,41 @@ class KalshiClient:
         self.use_sdk = False
         try:
             from kalshi_python import Configuration, KalshiClient as SDKClient
-            self.use_sdk = True
+
             # If private key is a file path, read it
             private_key = self.api_secret
             if os.path.isfile(self.api_secret):
                 with open(self.api_secret, 'r') as f:
                     private_key = f.read()
-            
+            else:
+                # Handle escaped newlines in environment variables
+                # Render and other platforms may store \n as literal string
+                private_key = private_key.replace('\\n', '\n')
+
+            # Ensure key has proper PEM format
+            if not private_key.startswith('-----BEGIN'):
+                print("Warning: Private key doesn't appear to be in PEM format")
+
             config = Configuration(
                 host=self.base_url,
                 api_key_id=self.api_key,
                 private_key_pem=private_key
             )
             self.sdk_client = SDKClient(config)
-        except ImportError:
-            # Fall back to REST API with custom auth
-            if self.api_key and self.api_secret:
-                # Kalshi may use JWT or custom headers - this is a placeholder
-                # You may need to adjust based on actual API requirements
-                self.session.headers.update({
-                    'X-API-Key': self.api_key,
-                    'X-API-Secret': self.api_secret
-                })
+            self.use_sdk = True
+            print("✅ Kalshi SDK initialized successfully")
+
+        except ImportError as e:
+            print(f"⚠️  Kalshi SDK not installed: {e}")
+            print("   Install with: pip install kalshi-python")
+            print("   Falling back to direct REST API (may not work)")
+            self.use_sdk = False
+        except Exception as e:
+            print(f"❌ Error initializing Kalshi SDK: {e}")
+            print(f"   API Key ID: {self.api_key[:10]}..." if self.api_key else "   No API key")
+            print(f"   Private key length: {len(self.api_secret)} chars")
+            print("   Make sure KALSHI_API_SECRET is your full RSA private key including -----BEGIN/END----- markers")
+            self.use_sdk = False
     
     def _make_request(self, method: str, endpoint: str, **kwargs) -> Dict:
         """
@@ -162,26 +175,41 @@ class KalshiClient:
     def get_markets(self, limit: int = 100, status: str = "open") -> List[Dict]:
         """
         Retrieve active markets from the Kalshi platform.
-        
+
         Fetches a list of markets matching the specified criteria, including
         current pricing, liquidity, and market metadata.
-        
+
         Args:
             limit: Maximum number of markets to retrieve (default: 100)
             status: Market status filter - 'open' for active markets, 'closed' for settled
-        
+
         Returns:
             List of market data dictionaries, empty list on error
         """
         try:
-            response = self._make_request(
-                "GET",
-                "/markets",
-                params={"limit": limit, "status": status}
-            )
-            return response.get("markets", [])
+            if self.use_sdk:
+                # Use official SDK
+                response = self.sdk_client.get_markets(limit=limit, status=status)
+                # SDK returns markets directly or in a response object
+                if hasattr(response, 'markets'):
+                    return response.markets
+                elif isinstance(response, dict):
+                    return response.get("markets", [])
+                elif isinstance(response, list):
+                    return response
+                return []
+            else:
+                # Fallback to REST API
+                response = self._make_request(
+                    "GET",
+                    "/markets",
+                    params={"limit": limit, "status": status}
+                )
+                return response.get("markets", [])
         except Exception as e:
             print(f"Error fetching markets: {e}")
+            import traceback
+            traceback.print_exc()
             return []
     
     def get_market(self, market_ticker: str) -> Optional[Dict]:
@@ -227,18 +255,29 @@ class KalshiClient:
     def get_portfolio(self) -> Optional[Dict]:
         """
         Retrieve current portfolio status and position information.
-        
+
         Returns comprehensive account data including available balance, open positions,
         and recent trading activity.
-        
+
         Returns:
             Portfolio data dictionary, None on error
         """
         try:
-            response = self._make_request("GET", "/portfolio")
-            return response
+            if self.use_sdk:
+                # Use official SDK
+                response = self.sdk_client.get_balance()
+                # SDK may return balance info directly or in response object
+                if hasattr(response, '__dict__'):
+                    return response.__dict__
+                return response
+            else:
+                # Fallback to REST API
+                response = self._make_request("GET", "/portfolio")
+                return response
         except Exception as e:
             print(f"Error fetching portfolio: {e}")
+            import traceback
+            traceback.print_exc()
             return None
     
     def place_order(self, market_ticker: str, side: str, action: str,
@@ -265,19 +304,42 @@ class KalshiClient:
             Order confirmation dictionary with order details, None on error
         """
         try:
-            payload = {
-                "ticker": market_ticker,
-                "side": side,
-                "action": action,
-                "count": count,
-                "price": price,
-                "type": order_type,
-                "time_in_force": time_in_force
-            }
-            response = self._make_request("POST", "/portfolio/orders", json=payload)
-            return response
+            if self.use_sdk:
+                # Use official SDK
+                response = self.sdk_client.create_order(
+                    ticker=market_ticker,
+                    client_order_id=None,  # Let SDK generate
+                    side=side,
+                    action=action,
+                    count=count,
+                    type=order_type,
+                    yes_price=price if side == 'yes' else None,
+                    no_price=price if side == 'no' else None,
+                    expiration_ts=None,  # Use time_in_force instead
+                    sell_position_floor=None,
+                    buy_max_cost=None
+                )
+                # Convert SDK response to dict
+                if hasattr(response, '__dict__'):
+                    return response.__dict__
+                return response
+            else:
+                # Fallback to REST API
+                payload = {
+                    "ticker": market_ticker,
+                    "side": side,
+                    "action": action,
+                    "count": count,
+                    "price": price,
+                    "type": order_type,
+                    "time_in_force": time_in_force
+                }
+                response = self._make_request("POST", "/portfolio/orders", json=payload)
+                return response
         except Exception as e:
             print(f"Error placing order: {e}")
+            import traceback
+            traceback.print_exc()
             return None
 
     def get_order_status(self, order_id: str) -> Optional[Dict]:
