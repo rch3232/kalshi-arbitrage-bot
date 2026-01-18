@@ -88,37 +88,30 @@ class KalshiArbitrageBot:
     
     def filter_markets_by_liquidity(self, markets: List[Dict]) -> List[Dict]:
         """
-        Filter markets to only include those with sufficient liquidity.
-        
-        Only includes markets that have:
-        - Liquidity >= minimum threshold
-        - Both bid and ask prices available (tradeable)
-        
+        Filter markets by volume and open_interest threshold.
+
+        NOTE: Market objects from get_markets() don't include orderbook data.
+        We filter by volume/open_interest, then fetch orderbooks separately.
+
         Args:
-            markets: List of market dictionaries from API
-            
+            markets: List of Market objects from get_markets()
+
         Returns:
-            Filtered list of markets with sufficient liquidity
+            Filtered list of markets with sufficient activity
         """
         filtered = []
         for market in markets:
-            # Check liquidity threshold
-            if safe_get(market, "liquidity", 0) < self.min_liquidity:
-                continue
+            # Market objects have volume and open_interest, but NO pricing/liquidity fields
+            volume = safe_get(market, 'volume', 0)
+            open_interest = safe_get(market, 'open_interest', 0)
 
-            # Check that market has bid/ask prices (is tradeable)
-            yes_bid = safe_get(market, "yes_bid")
-            yes_ask = safe_get(market, "yes_ask")
-            no_bid = safe_get(market, "no_bid")
-            no_ask = safe_get(market, "no_ask")
-            
-            # Market must have both bid AND ask for at least one side
-            has_yes_liquidity = yes_bid is not None and yes_ask is not None and yes_bid != yes_ask
-            has_no_liquidity = no_bid is not None and no_ask is not None and no_bid != no_ask
-            
-            if has_yes_liquidity or has_no_liquidity:
+            # Filter by volume OR open interest (indicates market activity)
+            # min_liquidity is in cents, volume is in contracts, so divide by 100
+            min_volume_contracts = self.min_liquidity / 100
+
+            if volume >= min_volume_contracts or open_interest >= min_volume_contracts:
                 filtered.append(market)
-        
+
         return filtered
     
     def scan_arbitrage_opportunities(self, limit: int = 100) -> List[ArbitrageOpportunity]:

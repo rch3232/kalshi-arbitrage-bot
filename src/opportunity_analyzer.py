@@ -76,11 +76,15 @@ class ArbitrageAnalyzer:
     def analyze_market(self, market_data: Dict, orderbook: Optional[Dict] = None) -> Optional[ArbitrageOpportunity]:
         """
         Analyze a single market for arbitrage opportunities.
-        
+
+        NOTE: Market objects from get_markets() don't include pricing data.
+        You MUST provide orderbook data for analysis.
+
         Args:
-            market_data: Market information dictionary
-            orderbook: Optional orderbook data for more accurate pricing
-        
+            market_data: Market information dictionary (has ticker, title, expiration, etc.)
+            orderbook: REQUIRED - Orderbook data from get_market_orderbook()
+                      Format: {'orderbook': {'yes': [[price, qty], ...], 'no': [[price, qty], ...]}}
+
         Returns:
             ArbitrageOpportunity if found, None otherwise
         """
@@ -100,132 +104,78 @@ class ArbitrageAnalyzer:
             if days_to_expiration <= 0:
                 return None
 
-            # Handle binary markets (yes/no) - most common on Kalshi
-            market_type = safe_get(market_data, "market_type", "")
+            # CRITICAL: Market objects don't have pricing data - must use orderbook
+            if not orderbook or 'orderbook' not in orderbook:
+                return None
 
-            # Get prices for binary markets
-            yes_bid = safe_get(market_data, "yes_bid")
-            yes_ask = safe_get(market_data, "yes_ask")
-            no_bid = safe_get(market_data, "no_bid")
-            no_ask = safe_get(market_data, "no_ask")
-            
+            ob = orderbook['orderbook']
+
+            # Extract best bids from orderbook
+            # Kalshi orderbooks have 'yes' and 'no' arrays of [price, quantity]
+            # In binary markets: yes_ask = 100 - no_bid, no_ask = 100 - yes_bid
+            yes_bid = None
+            no_bid = None
+            yes_ask = None
+            no_ask = None
+
+            if 'yes' in ob and ob['yes'] and len(ob['yes']) > 0:
+                yes_bid = ob['yes'][0][0]  # Best yes bid price
+                no_ask = 100 - yes_bid      # Calculate no ask from yes bid
+
+            if 'no' in ob and ob['no'] and len(ob['no']) > 0:
+                no_bid = ob['no'][0][0]     # Best no bid price
+                yes_ask = 100 - no_bid      # Calculate yes ask from no bid
+
+            # Need at least one bid and ask to analyze
+            if yes_bid is None or no_bid is None:
+                return None
+
             total_prob = 0.0
             contract_prices = []
-            
-            # For binary markets, check if yes + no prices sum to 100
-            if market_type == "binary" and (yes_bid is not None or yes_ask is not None):
-                # Use bid prices for selling arbitrage (yes_bid + no_bid > 100)
-                # Use ask prices for buying arbitrage (yes_ask + no_ask < 100)
-                
-                # Check selling arbitrage first (more common - we can sell both sides at bid prices)
-                if yes_bid is not None and no_bid is not None:
-                    total_prob_bid = (yes_bid + no_bid) / 100.0
-                    if total_prob_bid > 1.0:
-                        # Selling arbitrage opportunity
-                        contract_prices = [
-                            {
-                                'ticker': market_ticker,
-                                'side': 'yes',
-                                'price': yes_bid,
-                                'probability': yes_bid / 100.0
-                            },
-                            {
-                                'ticker': market_ticker,
-                                'side': 'no',
-                                'price': no_bid,
-                                'probability': no_bid / 100.0
-                            }
-                        ]
-                        total_prob = total_prob_bid
-                
-                # Check buying arbitrage (yes_ask + no_ask < 100)
-                if not contract_prices and yes_ask is not None and no_ask is not None:
-                    total_prob_ask = (yes_ask + no_ask) / 100.0
-                    if total_prob_ask < 1.0:
-                        # Buying arbitrage opportunity
-                        contract_prices = [
-                            {
-                                'ticker': market_ticker,
-                                'side': 'yes',
-                                'price': yes_ask,
-                                'probability': yes_ask / 100.0
-                            },
-                            {
-                                'ticker': market_ticker,
-                                'side': 'no',
-                                'price': no_ask,
-                                'probability': no_ask / 100.0
-                            }
-                        ]
-                        total_prob = total_prob_ask
-                
-                # Fallback: use average of bid/ask if available (for analysis, not arbitrage)
-                if not contract_prices:
-                    yes_price = None
-                    no_price = None
-                    
-                    if yes_bid is not None and yes_ask is not None:
-                        yes_price = (yes_bid + yes_ask) / 2
-                    elif yes_bid is not None:
-                        yes_price = yes_bid
-                    elif yes_ask is not None:
-                        yes_price = yes_ask
-                    
-                    if no_bid is not None and no_ask is not None:
-                        no_price = (no_bid + no_ask) / 2
-                    elif no_bid is not None:
-                        no_price = no_bid
-                    elif no_ask is not None:
-                        no_price = no_ask
-                    
-                    if yes_price is not None and no_price is not None:
-                        total_prob = (yes_price + no_price) / 100.0
-                        contract_prices = [
-                            {
-                                'ticker': market_ticker,
-                                'side': 'yes',
-                                'price': int(yes_price),
-                                'probability': yes_price / 100.0
-                            },
-                            {
-                                'ticker': market_ticker,
-                                'side': 'no',
-                                'price': int(no_price),
-                                'probability': no_price / 100.0
-                            }
-                        ]
-            
-            # Fallback: Try to find contracts/outcomes array (for non-binary markets)
-            if not contract_prices:
-                contracts = market_data.get("contracts", [])
-                if not contracts:
-                    outcomes = market_data.get("outcomes", [])
-                    if outcomes:
-                        contracts = outcomes
-                
-                if contracts:
-                    for contract in contracts:
-                        price_cents = contract.get("last_price")
-                        if price_cents is None:
-                            yes_bid_c = contract.get("yes_bid")
-                            yes_ask_c = contract.get("yes_ask")
-                            if yes_bid_c is not None and yes_ask_c is not None:
-                                price_cents = (yes_bid_c + yes_ask_c) / 2
-                            elif yes_bid_c is not None:
-                                price_cents = yes_bid_c
-                            elif yes_ask_c is not None:
-                                price_cents = yes_ask_c
-                        
-                        if price_cents is not None:
-                            prob = price_cents / 100.0
-                            total_prob += prob
-                            contract_prices.append({
-                                'ticker': contract.get("ticker", market_ticker),
-                                'side': 'yes',
-                                'price': int(price_cents),
-                                'probability': prob
-                            })
-            
+
+            # Check selling arbitrage first (yes_bid + no_bid > 100)
+            # We can sell both sides at bid prices
+            if yes_bid is not None and no_bid is not None:
+                total_prob_bid = (yes_bid + no_bid) / 100.0
+                if total_prob_bid > 1.0:
+                    # Selling arbitrage opportunity
+                    contract_prices = [
+                        {
+                            'ticker': market_ticker,
+                            'side': 'yes',
+                            'price': yes_bid,
+                            'probability': yes_bid / 100.0
+                        },
+                        {
+                            'ticker': market_ticker,
+                            'side': 'no',
+                            'price': no_bid,
+                            'probability': no_bid / 100.0
+                        }
+                    ]
+                    total_prob = total_prob_bid
+
+            # Check buying arbitrage (yes_ask + no_ask < 100)
+            if not contract_prices and yes_ask is not None and no_ask is not None:
+                total_prob_ask = (yes_ask + no_ask) / 100.0
+                if total_prob_ask < 1.0:
+                    # Buying arbitrage opportunity
+                    contract_prices = [
+                        {
+                            'ticker': market_ticker,
+                            'side': 'yes',
+                            'price': yes_ask,
+                            'probability': yes_ask / 100.0
+                        },
+                        {
+                            'ticker': market_ticker,
+                            'side': 'no',
+                            'price': no_ask,
+                            'probability': no_ask / 100.0
+                        }
+                    ]
+                    total_prob = total_prob_ask
+
             if not contract_prices:
                 return None
             

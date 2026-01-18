@@ -83,16 +83,20 @@ class TradeExecutor:
         self.executed_trades = []
         self.current_exposure = 0.0  # Track total exposure for capital management
     
-    def analyze_orderbook_spread(self, market_data: Dict, 
+    def analyze_orderbook_spread(self, market_data: Dict,
                                   orderbook: Optional[Dict] = None) -> List[TradeOpportunity]:
         """
-        Analyze orderbook for immediate arbitrage opportunities.
+        Analyze orderbook for immediate spread trading opportunities.
         Finds cases where we can buy low and sell high instantly.
-        
+
+        NOTE: Market objects from get_markets() don't have pricing data.
+        You MUST provide orderbook data for analysis.
+
         Args:
-            market_data: Market information dictionary
-            orderbook: Optional orderbook data with bids and asks
-        
+            market_data: Market information (ticker, title, etc.)
+            orderbook: REQUIRED - Orderbook from get_market_orderbook()
+                      Format: {'orderbook': {'yes': [[price, qty], ...], 'no': [[price, qty], ...]}}
+
         Returns:
             List of TradeOpportunity objects
         """
@@ -100,83 +104,111 @@ class TradeExecutor:
         market_ticker = safe_get(market_data, "ticker", "")
         market_title = safe_get(market_data, "title", "")
 
-        # Get prices from market data
-        yes_bid = safe_get(market_data, "yes_bid")  # Best price to sell YES
-        yes_ask = safe_get(market_data, "yes_ask")  # Best price to buy YES
-        no_bid = safe_get(market_data, "no_bid")    # Best price to sell NO
-        no_ask = safe_get(market_data, "no_ask")    # Best price to buy NO
-        
-        # Check YES side: if ask < bid, we can buy at ask and sell at bid
+        # CRITICAL: Market objects don't have pricing - must use orderbook
+        if not orderbook or 'orderbook' not in orderbook:
+            return []
+
+        ob = orderbook['orderbook']
+
+        # Extract best bids from orderbook
+        # Kalshi orderbooks: 'yes' and 'no' arrays of [price, quantity]
+        # In binary markets: yes_ask = 100 - no_bid, no_ask = 100 - yes_bid
+        yes_bid = None
+        yes_bid_qty = 0
+        no_bid = None
+        no_bid_qty = 0
+        yes_ask = None
+        yes_ask_qty = 0
+        no_ask = None
+        no_ask_qty = 0
+
+        if 'yes' in ob and ob['yes'] and len(ob['yes']) > 0:
+            yes_bid = ob['yes'][0][0]          # Best yes bid price
+            yes_bid_qty = ob['yes'][0][1]      # Quantity available at that price
+            no_ask = 100 - yes_bid              # Calculate no ask from yes bid
+            no_ask_qty = yes_bid_qty
+
+        if 'no' in ob and ob['no'] and len(ob['no']) > 0:
+            no_bid = ob['no'][0][0]            # Best no bid price
+            no_bid_qty = ob['no'][0][1]        # Quantity available
+            yes_ask = 100 - no_bid              # Calculate yes ask from no bid
+            yes_ask_qty = no_bid_qty
+
+
+        # Check YES side: spread = bid - ask (can we buy at ask and sell at bid?)
         if yes_ask is not None and yes_bid is not None:
             spread = yes_bid - yes_ask
             if spread >= self.min_profit_cents:
-                # Calculate maximum quantity we can trade
-                # Use capital manager for dynamic position sizing if available
-                if self.capital_manager:
-                    quantity = self.capital_manager.get_max_position_size(yes_ask, self.current_exposure)
-                    quantity = min(quantity, self.max_position_size, 100)
-                else:
-                    quantity = min(self.max_position_size, 100)  # Start conservative
-                
-                # Calculate profit
-                gross_profit_per_contract = spread / 100.0  # Convert cents to dollars
-                gross_profit = gross_profit_per_contract * quantity
-                
-                # Calculate fees (we pay fees on both buy and sell)
-                buy_fee = FeeCalculator.calculate_fee(yes_ask, quantity, is_maker=False)
-                sell_fee = FeeCalculator.calculate_fee(yes_bid, quantity, is_maker=False)
-                total_fees = buy_fee + sell_fee
-                
-                net_profit = gross_profit - total_fees
-                
-                if net_profit > 0:
-                    opportunities.append(TradeOpportunity(
-                        market_ticker=market_ticker,
-                        market_title=market_title,
-                        side='yes',
-                        buy_price=yes_ask,
-                        sell_price=yes_bid,
-                        quantity=quantity,
-                        gross_profit=gross_profit,
-                        net_profit=net_profit
-                    ))
-        
-        # Check NO side: if ask < bid, we can buy at ask and sell at bid
+                # Quantity limited by orderbook depth
+                available_qty = min(yes_ask_qty, yes_bid_qty) if yes_ask_qty and yes_bid_qty else 0
+
+                if available_qty > 0:
+                    # Use capital manager for dynamic position sizing
+                    if self.capital_manager:
+                        max_qty = self.capital_manager.get_max_position_size(yes_ask, self.current_exposure)
+                        quantity = min(max_qty, self.max_position_size, available_qty)
+                    else:
+                        quantity = min(self.max_position_size, available_qty)
+
+                    # Calculate profit
+                    gross_profit_per_contract = spread / 100.0  # Convert cents to dollars
+                    gross_profit = gross_profit_per_contract * quantity
+
+                    # Calculate fees (we pay fees on both buy and sell)
+                    buy_fee = FeeCalculator.calculate_fee(yes_ask, quantity, is_maker=False)
+                    sell_fee = FeeCalculator.calculate_fee(yes_bid, quantity, is_maker=False)
+                    total_fees = buy_fee + sell_fee
+
+                    net_profit = gross_profit - total_fees
+
+                    if net_profit > 0:
+                        opportunities.append(TradeOpportunity(
+                            market_ticker=market_ticker,
+                            market_title=market_title,
+                            side='yes',
+                            buy_price=yes_ask,
+                            sell_price=yes_bid,
+                            quantity=quantity,
+                            gross_profit=gross_profit,
+                            net_profit=net_profit
+                        ))
+
+        # Check NO side: spread = bid - ask
         if no_ask is not None and no_bid is not None:
             spread = no_bid - no_ask
             if spread >= self.min_profit_cents:
-                # Use capital manager for dynamic position sizing if available
-                if self.capital_manager:
-                    quantity = self.capital_manager.get_max_position_size(no_ask, self.current_exposure)
-                    quantity = min(quantity, self.max_position_size, 100)
-                else:
-                    quantity = min(self.max_position_size, 100)  # Start conservative
-                
-                gross_profit_per_contract = spread / 100.0
-                gross_profit = gross_profit_per_contract * quantity
-                
-                buy_fee = FeeCalculator.calculate_fee(no_ask, quantity, is_maker=False)
-                sell_fee = FeeCalculator.calculate_fee(no_bid, quantity, is_maker=False)
-                total_fees = buy_fee + sell_fee
-                
-                net_profit = gross_profit - total_fees
-                
-                if net_profit > 0:
-                    opportunities.append(TradeOpportunity(
-                        market_ticker=market_ticker,
-                        market_title=market_title,
-                        side='no',
-                        buy_price=no_ask,
-                        sell_price=no_bid,
-                        quantity=quantity,
-                        gross_profit=gross_profit,
-                        net_profit=net_profit
-                    ))
-        
-        # If we have orderbook data, use it for more accurate quantity calculation
-        if orderbook:
-            opportunities = self._refine_with_orderbook(opportunities, orderbook)
-        
+                # Quantity limited by orderbook depth
+                available_qty = min(no_ask_qty, no_bid_qty) if no_ask_qty and no_bid_qty else 0
+
+                if available_qty > 0:
+                    # Use capital manager for dynamic position sizing
+                    if self.capital_manager:
+                        max_qty = self.capital_manager.get_max_position_size(no_ask, self.current_exposure)
+                        quantity = min(max_qty, self.max_position_size, available_qty)
+                    else:
+                        quantity = min(self.max_position_size, available_qty)
+
+                    gross_profit_per_contract = spread / 100.0
+                    gross_profit = gross_profit_per_contract * quantity
+
+                    buy_fee = FeeCalculator.calculate_fee(no_ask, quantity, is_maker=False)
+                    sell_fee = FeeCalculator.calculate_fee(no_bid, quantity, is_maker=False)
+                    total_fees = buy_fee + sell_fee
+
+                    net_profit = gross_profit - total_fees
+
+                    if net_profit > 0:
+                        opportunities.append(TradeOpportunity(
+                            market_ticker=market_ticker,
+                            market_title=market_title,
+                            side='no',
+                            buy_price=no_ask,
+                            sell_price=no_bid,
+                            quantity=quantity,
+                            gross_profit=gross_profit,
+                            net_profit=net_profit
+                        ))
+
         return opportunities
     
     def _refine_with_orderbook(self, opportunities: List[TradeOpportunity], 

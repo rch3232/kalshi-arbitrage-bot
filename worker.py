@@ -91,23 +91,22 @@ class BackgroundWorker:
         self.running = False
 
     def filter_markets_by_liquidity(self, markets):
-        """Filter markets by liquidity threshold."""
+        """Filter markets by volume and open_interest threshold.
+
+        Note: Market objects from get_markets() don't include orderbook data.
+        We filter by volume/open_interest, then fetch orderbooks separately.
+        """
         filtered = []
         for market in markets:
             # Use safe_get to handle both dict and object formats
-            liquidity = safe_get(market, 'liquidity', 0)
-            yes_bid = safe_get(market, 'yes_bid')
-            yes_ask = safe_get(market, 'yes_ask')
-            no_bid = safe_get(market, 'no_bid')
-            no_ask = safe_get(market, 'no_ask')
+            volume = safe_get(market, 'volume', 0)
+            open_interest = safe_get(market, 'open_interest', 0)
 
-            if liquidity < self.min_liquidity:
-                continue
+            # Filter by volume OR open interest (whichever is higher indicates activity)
+            # min_liquidity is in cents, volume is in contracts, so divide by 100
+            min_volume_contracts = self.min_liquidity / 100
 
-            has_yes_liquidity = yes_bid is not None and yes_ask is not None and yes_bid != yes_ask
-            has_no_liquidity = no_bid is not None and no_ask is not None and no_bid != no_ask
-
-            if has_yes_liquidity or has_no_liquidity:
+            if volume >= min_volume_contracts or open_interest >= min_volume_contracts:
                 filtered.append(market)
 
         return filtered

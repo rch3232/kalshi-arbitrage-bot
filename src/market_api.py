@@ -278,19 +278,39 @@ class KalshiClient:
     def get_market_orderbook(self, market_ticker: str) -> Optional[Dict]:
         """
         Retrieve the complete orderbook for a specified market.
-        
-        Returns detailed orderbook data including bid and ask prices with
-        associated quantities, enabling precise spread analysis and trade execution.
-        
+
+        Returns detailed orderbook data including bid prices (no separate asks in Kalshi).
+        In Kalshi's binary markets, a YES bid at X cents = NO ask at (100-X) cents.
+
         Args:
             market_ticker: Unique market identifier
-        
+
         Returns:
-            Orderbook data dictionary with bids and asks, None on error
+            Orderbook dictionary with structure:
+            {
+                'orderbook': {
+                    'yes': [[price_cents, quantity], ...],  # YES bids
+                    'no': [[price_cents, quantity], ...]    # NO bids
+                }
+            }
+            Returns None on error.
         """
         try:
-            response = self._make_request("GET", f"/markets/{market_ticker}/orderbook")
-            return response
+            if self.use_sdk:
+                # Use official SDK
+                response = self.sdk_client.get_market_orderbook(ticker=market_ticker)
+                # SDK may return orderbook directly or in response object
+                if hasattr(response, 'orderbook'):
+                    return {'orderbook': response.orderbook}
+                elif hasattr(response, '__dict__'):
+                    return response.__dict__
+                elif isinstance(response, dict):
+                    return response
+                return response
+            else:
+                # Fallback to REST API
+                response = self._make_request("GET", f"/markets/{market_ticker}/orderbook")
+                return response
         except Exception as e:
             print(f"Error fetching orderbook for {market_ticker}: {e}")
             return None
