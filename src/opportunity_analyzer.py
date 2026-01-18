@@ -97,7 +97,16 @@ class ArbitrageAnalyzer:
             if not expiration_str:
                 return None
 
-            expiration_date = date_parser.parse(expiration_str)
+            # Handle both string and datetime objects
+            # The SDK may return datetime objects, REST API returns strings
+            if isinstance(expiration_str, datetime):
+                expiration_date = expiration_str
+            elif isinstance(expiration_str, str):
+                expiration_date = date_parser.parse(expiration_str)
+            else:
+                # Unknown format, skip this market
+                return None
+
             days_to_expiration = (expiration_date - datetime.now(expiration_date.tzinfo)).total_seconds() / 86400
 
             # Skip markets that have already expired
