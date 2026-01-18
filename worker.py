@@ -93,13 +93,23 @@ class BackgroundWorker:
         """Filter markets by liquidity threshold."""
         filtered = []
         for market in markets:
-            if market.get("liquidity", 0) < self.min_liquidity:
-                continue
+            # Handle both dict and object formats
+            if isinstance(market, dict):
+                liquidity = market.get("liquidity", 0)
+                yes_bid = market.get("yes_bid")
+                yes_ask = market.get("yes_ask")
+                no_bid = market.get("no_bid")
+                no_ask = market.get("no_ask")
+            else:
+                # SDK returns objects with properties
+                liquidity = getattr(market, 'liquidity', 0)
+                yes_bid = getattr(market, 'yes_bid', None)
+                yes_ask = getattr(market, 'yes_ask', None)
+                no_bid = getattr(market, 'no_bid', None)
+                no_ask = getattr(market, 'no_ask', None)
 
-            yes_bid = market.get("yes_bid")
-            yes_ask = market.get("yes_ask")
-            no_bid = market.get("no_bid")
-            no_ask = market.get("no_ask")
+            if liquidity < self.min_liquidity:
+                continue
 
             has_yes_liquidity = yes_bid is not None and yes_ask is not None and yes_bid != yes_ask
             has_no_liquidity = no_bid is not None and no_ask is not None and no_bid != no_ask
