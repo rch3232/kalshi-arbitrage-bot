@@ -158,15 +158,62 @@ class BackgroundWorker:
             if not markets:
                 return [], [], 0
 
-            # Scan for arbitrage opportunities
-            arbitrage_opps = self.arbitrage_analyzer.find_opportunities(markets, client=self.client)
-            arbitrage_opps = [
-                opp for opp in arbitrage_opps
-                if opp.profit_per_day >= self.min_profit_per_day
-            ]
+            # Fetch orderbooks for all filtered markets (with rate limiting)
+            # This prevents fetching the same orderbook multiple times
+            print(f"Fetching orderbooks for {len(markets)} markets...")
+            markets_with_orderbooks = []
+            for i, market in enumerate(markets):
+                ticker = safe_get(market, "ticker", "")
+                if not ticker:
+                    continue
 
-            # Scan for spread trading opportunities
-            trade_opps = self.trade_executor.scan_and_execute(markets, limit=self.market_limit)
+                try:
+                    import time
+                    time.sleep(0.2)  # 200ms delay to respect rate limits
+                    orderbook = self.client.get_market_orderbook(ticker)
+                    if orderbook:
+                        markets_with_orderbooks.append({
+                            'market': market,
+                            'orderbook': orderbook
+                        })
+
+                    # Progress update every 10 markets
+                    if (i + 1) % 10 == 0:
+                        print(f"  Fetched {i + 1}/{len(markets)} orderbooks...")
+                except Exception as e:
+                    print(f"  Error fetching orderbook for {ticker}: {e}")
+                    continue
+
+            print(f"Successfully fetched {len(markets_with_orderbooks)} orderbooks")
+
+            if not markets_with_orderbooks:
+                print("No orderbooks available for analysis")
+                return [], [], 0
+
+            # Analyze for arbitrage opportunities
+            arbitrage_opps = []
+            for item in markets_with_orderbooks:
+                opp = self.arbitrage_analyzer.analyze_market(item['market'], item['orderbook'])
+                if opp and opp.profit_per_day >= self.min_profit_per_day:
+                    arbitrage_opps.append(opp)
+
+            arbitrage_opps.sort(key=lambda x: x.profit_per_day, reverse=True)
+
+            # Analyze for spread trading opportunities
+            trade_opps = []
+            for item in markets_with_orderbooks:
+                opps = self.trade_executor.analyze_orderbook_spread(item['market'], item['orderbook'])
+                for opp in opps:
+                    if self.trade_executor.auto_execute:
+                        success, message = self.trade_executor.execute_trade(opp)
+                        if success:
+                            print(f"[AUTO-EXECUTE] {message}")
+                            trade_opps.append(opp)
+                        else:
+                            print(f"[AUTO-EXECUTE FAILED] {message}")
+                    else:
+                        trade_opps.append(opp)
+
             trade_opps.sort(key=lambda x: x.net_profit, reverse=True)
 
             # Count executed trades
