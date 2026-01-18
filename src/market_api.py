@@ -40,7 +40,7 @@ class KalshiClient:
         self.api_key = os.getenv("KALSHI_API_KEY")
         # Private Key from Kalshi account settings (can be PEM string or file path)
         self.api_secret = os.getenv("KALSHI_API_SECRET")
-        self.base_url = os.getenv("KALSHI_API_BASE_URL", "https://api.elections.kalshi.com/trade-api/v2")
+        self.base_url = os.getenv("KALSHI_API_BASE_URL", "https://trading-api.kalshi.com/trade-api/v2")
         self.session = requests.Session()
         
         # Rate limiting configuration
