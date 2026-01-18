@@ -68,7 +68,7 @@ class BackgroundWorker:
         )
 
         # Configuration
-        self.scan_interval = int(os.getenv("SCAN_INTERVAL_SECONDS", "300"))  # 5 minutes
+        self.scan_interval = int(os.getenv("SCAN_INTERVAL_SECONDS", "30"))  # 30 seconds
         self.market_limit = int(os.getenv("MARKET_SCAN_LIMIT", "1000"))  # Scan up to 1000 markets
         self.min_liquidity = int(os.getenv("MIN_LIQUIDITY", "10000"))  # $100 minimum
         self.min_profit_per_day = float(os.getenv("MIN_PROFIT_PER_DAY", "0.1"))

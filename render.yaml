@@ -43,7 +43,7 @@ services:
       - key: MARKET_SCAN_LIMIT
         value: "1000"  # Scan up to 1000 markets per iteration
       - key: SCAN_INTERVAL_SECONDS
-        value: "300"  # Scan every 5 minutes (300 seconds)
+        value: "30"  # Scan every 30 seconds
 
       # API Rate Limiting
       - key: API_MIN_INTERVAL
