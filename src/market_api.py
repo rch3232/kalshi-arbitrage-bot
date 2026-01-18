@@ -63,10 +63,12 @@ class KalshiClient:
             # Process private key from various formats
             private_key = self.api_secret
 
-            # If private key is a file path, read it
+            # Method 1: If private key is a file path, read it (e.g., Render Secret File)
             if os.path.isfile(self.api_secret):
+                print(f"✅ Reading private key from file: {self.api_secret}")
                 with open(self.api_secret, 'r') as f:
                     private_key = f.read()
+                print(f"✅ Loaded private key from file ({len(private_key)} chars)")
             else:
                 # Try base64 decoding (if key is base64-encoded single line)
                 if not private_key.startswith('-----BEGIN'):

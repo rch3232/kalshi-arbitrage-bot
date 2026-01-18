@@ -1,15 +1,18 @@
 # Render Deployment Checklist
 
-## Required Environment Variables
+## Required Setup in Render
 
-Before deploying to Render, you **MUST** set these environment variables in the Render dashboard:
+Before deploying to Render, you **MUST** configure these in the Render dashboard:
 
 ### 1. REQUIRED (Bot will not work without these)
 
-| Variable | Value | Where to Get It |
-|----------|-------|-----------------|
-| `KALSHI_API_KEY` | Your API Key ID | [Kalshi Settings → API](https://kalshi.com/settings/api) |
-| `KALSHI_API_SECRET` | Your Private Key | [Kalshi Settings → API](https://kalshi.com/settings/api) |
+| What to Set | Where | Value | Where to Get It |
+|-------------|-------|-------|-----------------|
+| `KALSHI_API_KEY` | Environment Variable | Your API Key ID | [Kalshi Settings → API](https://kalshi.com/settings/api) |
+| `kalshi_private_key` | **Secret File** ⭐ | Your full RSA private key | [Kalshi Settings → API](https://kalshi.com/settings/api) |
+| `KALSHI_API_SECRET` | Environment Variable | `/etc/secrets/kalshi_private_key` | Points to the Secret File |
+
+**Recommended Method:** Use Render's **Secret Files** for your private key (multi-line support built-in)!
 
 ### 2. CRITICAL SAFETY SETTING
 
@@ -47,15 +50,35 @@ These have sensible defaults in `render.yaml`, but you can override them in the 
 - Select repository: `rch3232/kalshi-arbitrage-bot`
 - Select branch: `claude/kalshi-bot-setup-OmpF6`
 
-### 3. Configure Environment Variables
-Go to the "Environment" tab and add:
+### 3. Configure Environment Variables & Secret Files
 
-**REQUIRED:**
-- `KALSHI_API_KEY` = [Your API Key from Kalshi]
-- `KALSHI_API_SECRET` = [Your Private Key from Kalshi]
+#### Option A: Using Secret Files (RECOMMENDED) ⭐
+Secret Files are designed for multi-line secrets like private keys.
 
-**SAFETY (START WITH THIS):**
-- `AUTO_EXECUTE_TRADES` = `false`
+**In Environment tab:**
+1. Add Environment Variable:
+   - `KALSHI_API_KEY` = [Your API Key ID from Kalshi]
+
+2. Create Secret File (scroll to "Secret Files" section):
+   - Filename: `kalshi_private_key`
+   - Contents: [Paste your FULL RSA private key including -----BEGIN/END----- lines]
+
+3. Add Environment Variable to point to the file:
+   - `KALSHI_API_SECRET` = `/etc/secrets/kalshi_private_key`
+
+4. Add safety setting:
+   - `AUTO_EXECUTE_TRADES` = `false`
+
+**See [RENDER_SECRET_FILE_GUIDE.md](RENDER_SECRET_FILE_GUIDE.md) for detailed instructions.**
+
+#### Option B: Using Base64 Environment Variable (Alternative)
+If you prefer not to use Secret Files:
+
+1. Run `python encode_key.py` locally to convert your key to base64
+2. Add Environment Variables:
+   - `KALSHI_API_KEY` = [Your API Key ID]
+   - `KALSHI_API_SECRET` = [Base64-encoded private key]
+   - `AUTO_EXECUTE_TRADES` = `false`
 
 ### 4. Deploy
 - Click "Create Background Worker"

@@ -12,8 +12,14 @@ services:
       # Kalshi API Credentials (REQUIRED - set in Render dashboard)
       - key: KALSHI_API_KEY
         sync: false  # Set manually in dashboard
+
+      # Option 1: Use Secret File (RECOMMENDED for private key)
+      # Create a Secret File in Render dashboard with your private key
+      # Then set this to the file path (e.g., /etc/secrets/kalshi_private_key)
       - key: KALSHI_API_SECRET
-        sync: false  # Set manually in dashboard
+        sync: false  # Set to secret file path OR the actual key
+
+      # Option 2: Set KALSHI_API_SECRET to base64-encoded key directly (if not using Secret File)
 
       # Kalshi API Configuration
       - key: KALSHI_API_BASE_URL
