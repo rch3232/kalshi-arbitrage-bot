@@ -19,6 +19,7 @@ from typing import List, Dict, Optional, Tuple
 from datetime import datetime
 from dateutil import parser as date_parser
 from .cost_calculator import FeeCalculator
+from .utils import safe_get
 
 
 class ArbitrageOpportunity:
@@ -84,29 +85,29 @@ class ArbitrageAnalyzer:
             ArbitrageOpportunity if found, None otherwise
         """
         try:
-            market_ticker = market_data.get("ticker", "")
-            market_title = market_data.get("title", "")
-            
+            market_ticker = safe_get(market_data, "ticker", "")
+            market_title = safe_get(market_data, "title", "")
+
             # Get expiration date
-            expiration_str = market_data.get("expiration_time") or market_data.get("expiration_date")
+            expiration_str = safe_get(market_data, "expiration_time") or safe_get(market_data, "expiration_date")
             if not expiration_str:
                 return None
-            
+
             expiration_date = date_parser.parse(expiration_str)
             days_to_expiration = (expiration_date - datetime.now(expiration_date.tzinfo)).total_seconds() / 86400
-            
+
             # Skip markets that have already expired
             if days_to_expiration <= 0:
                 return None
-            
+
             # Handle binary markets (yes/no) - most common on Kalshi
-            market_type = market_data.get("market_type", "")
-            
+            market_type = safe_get(market_data, "market_type", "")
+
             # Get prices for binary markets
-            yes_bid = market_data.get("yes_bid")
-            yes_ask = market_data.get("yes_ask")
-            no_bid = market_data.get("no_bid")
-            no_ask = market_data.get("no_ask")
+            yes_bid = safe_get(market_data, "yes_bid")
+            yes_ask = safe_get(market_data, "yes_ask")
+            no_bid = safe_get(market_data, "no_bid")
+            no_ask = safe_get(market_data, "no_ask")
             
             total_prob = 0.0
             contract_prices = []
@@ -347,7 +348,7 @@ class ArbitrageAnalyzer:
                 try:
                     import time
                     time.sleep(0.2)  # 200ms delay between orderbook requests
-                    orderbook = client.get_market_orderbook(market.get("ticker", ""))
+                    orderbook = client.get_market_orderbook(safe_get(market, "ticker", ""))
                 except:
                     pass
             

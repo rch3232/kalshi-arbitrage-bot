@@ -29,6 +29,7 @@ from src.market_api import KalshiClient
 from src.opportunity_analyzer import ArbitrageAnalyzer, ArbitrageOpportunity
 from src.execution_engine import TradeExecutor, TradeOpportunity
 from src.capital_manager import CapitalManager
+from src.utils import safe_get
 
 load_dotenv()
 
@@ -102,14 +103,14 @@ class KalshiArbitrageBot:
         filtered = []
         for market in markets:
             # Check liquidity threshold
-            if market.get("liquidity", 0) < self.min_liquidity:
+            if safe_get(market, "liquidity", 0) < self.min_liquidity:
                 continue
-            
+
             # Check that market has bid/ask prices (is tradeable)
-            yes_bid = market.get("yes_bid")
-            yes_ask = market.get("yes_ask")
-            no_bid = market.get("no_bid")
-            no_ask = market.get("no_ask")
+            yes_bid = safe_get(market, "yes_bid")
+            yes_ask = safe_get(market, "yes_ask")
+            no_bid = safe_get(market, "no_bid")
+            no_ask = safe_get(market, "no_ask")
             
             # Market must have both bid AND ask for at least one side
             has_yes_liquidity = yes_bid is not None and yes_ask is not None and yes_bid != yes_ask

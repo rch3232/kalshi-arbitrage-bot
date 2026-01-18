@@ -28,6 +28,7 @@ from src.market_api import KalshiClient
 from src.opportunity_analyzer import ArbitrageAnalyzer
 from src.execution_engine import TradeExecutor
 from src.capital_manager import CapitalManager
+from src.utils import safe_get
 
 load_dotenv()
 
@@ -93,20 +94,12 @@ class BackgroundWorker:
         """Filter markets by liquidity threshold."""
         filtered = []
         for market in markets:
-            # Handle both dict and object formats
-            if isinstance(market, dict):
-                liquidity = market.get("liquidity", 0)
-                yes_bid = market.get("yes_bid")
-                yes_ask = market.get("yes_ask")
-                no_bid = market.get("no_bid")
-                no_ask = market.get("no_ask")
-            else:
-                # SDK returns objects with properties
-                liquidity = getattr(market, 'liquidity', 0)
-                yes_bid = getattr(market, 'yes_bid', None)
-                yes_ask = getattr(market, 'yes_ask', None)
-                no_bid = getattr(market, 'no_bid', None)
-                no_ask = getattr(market, 'no_ask', None)
+            # Use safe_get to handle both dict and object formats
+            liquidity = safe_get(market, 'liquidity', 0)
+            yes_bid = safe_get(market, 'yes_bid')
+            yes_ask = safe_get(market, 'yes_ask')
+            no_bid = safe_get(market, 'no_bid')
+            no_ask = safe_get(market, 'no_ask')
 
             if liquidity < self.min_liquidity:
                 continue

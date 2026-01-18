@@ -22,6 +22,7 @@ from typing import List, Dict, Optional, Tuple
 from datetime import datetime
 from .market_api import KalshiClient
 from .cost_calculator import FeeCalculator
+from .utils import safe_get
 
 
 class TradeOpportunity:
@@ -96,14 +97,14 @@ class TradeExecutor:
             List of TradeOpportunity objects
         """
         opportunities = []
-        market_ticker = market_data.get("ticker", "")
-        market_title = market_data.get("title", "")
-        
+        market_ticker = safe_get(market_data, "ticker", "")
+        market_title = safe_get(market_data, "title", "")
+
         # Get prices from market data
-        yes_bid = market_data.get("yes_bid")  # Best price to sell YES
-        yes_ask = market_data.get("yes_ask")  # Best price to buy YES
-        no_bid = market_data.get("no_bid")    # Best price to sell NO
-        no_ask = market_data.get("no_ask")    # Best price to buy NO
+        yes_bid = safe_get(market_data, "yes_bid")  # Best price to sell YES
+        yes_ask = safe_get(market_data, "yes_ask")  # Best price to buy YES
+        no_bid = safe_get(market_data, "no_bid")    # Best price to sell NO
+        no_ask = safe_get(market_data, "no_ask")    # Best price to buy NO
         
         # Check YES side: if ask < bid, we can buy at ask and sell at bid
         if yes_ask is not None and yes_bid is not None:
@@ -374,7 +375,7 @@ class TradeExecutor:
         all_opportunities = []
         
         for market in markets[:limit]:
-            market_ticker = market.get("ticker", "")
+            market_ticker = safe_get(market, "ticker", "")
             if not market_ticker:
                 continue
             
