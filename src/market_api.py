@@ -60,19 +60,38 @@ class KalshiClient:
         try:
             from kalshi_python import Configuration, KalshiClient as SDKClient
 
-            # If private key is a file path, read it
+            # Process private key from various formats
             private_key = self.api_secret
+
+            # If private key is a file path, read it
             if os.path.isfile(self.api_secret):
                 with open(self.api_secret, 'r') as f:
                     private_key = f.read()
             else:
+                # Try base64 decoding (if key is base64-encoded single line)
+                if not private_key.startswith('-----BEGIN'):
+                    try:
+                        import base64
+                        decoded = base64.b64decode(private_key).decode('utf-8')
+                        if decoded.startswith('-----BEGIN'):
+                            private_key = decoded
+                            print("✅ Decoded base64-encoded private key")
+                    except:
+                        pass  # Not base64, continue with other methods
+
                 # Handle escaped newlines in environment variables
                 # Render and other platforms may store \n as literal string
-                private_key = private_key.replace('\\n', '\n')
+                if '\\n' in private_key:
+                    private_key = private_key.replace('\\n', '\n')
+                    print("✅ Converted \\n escapes to newlines")
 
             # Ensure key has proper PEM format
             if not private_key.startswith('-----BEGIN'):
-                print("Warning: Private key doesn't appear to be in PEM format")
+                print("⚠️  Warning: Private key doesn't appear to be in PEM format")
+                print(f"   Key starts with: {private_key[:30]}...")
+            else:
+                lines = private_key.count('\n')
+                print(f"✅ Private key appears valid ({lines} lines)")
 
             config = Configuration(
                 host=self.base_url,
