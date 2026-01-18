@@ -95,6 +95,11 @@ class KalshiClient:
                 lines = private_key.count('\n')
                 print(f"✅ Private key appears valid ({lines} lines)")
 
+            print(f"\n🔧 Initializing Kalshi SDK:")
+            print(f"   Host: {self.base_url}")
+            print(f"   API Key ID: {self.api_key[:10]}...")
+            print(f"   Private Key: {len(private_key)} chars, {private_key.count(chr(10))} lines")
+
             config = Configuration(
                 host=self.base_url,
                 api_key_id=self.api_key,
@@ -102,19 +107,33 @@ class KalshiClient:
             )
             self.sdk_client = SDKClient(config)
             self.use_sdk = True
-            print("✅ Kalshi SDK initialized successfully")
+            print("✅ Kalshi SDK client created successfully")
+
+            # Test the SDK with a simple call
+            print("🧪 Testing SDK authentication...")
+            try:
+                test_response = self.sdk_client.get_exchange_status()
+                print(f"✅ SDK authentication test PASSED: {test_response}")
+            except Exception as test_error:
+                print(f"❌ SDK authentication test FAILED: {test_error}")
+                import traceback
+                traceback.print_exc()
+                raise RuntimeError(f"SDK created but authentication failed: {test_error}")
 
         except ImportError as e:
-            print(f"⚠️  Kalshi SDK not installed: {e}")
+            print(f"❌ FATAL: Kalshi SDK not installed: {e}")
             print("   Install with: pip install kalshi-python")
-            print("   Falling back to direct REST API (may not work)")
-            self.use_sdk = False
+            print("   Cannot proceed without SDK - REST API auth is not supported")
+            raise RuntimeError("Kalshi SDK is required but not installed")
         except Exception as e:
-            print(f"❌ Error initializing Kalshi SDK: {e}")
+            print(f"❌ FATAL: Error initializing Kalshi SDK: {e}")
             print(f"   API Key ID: {self.api_key[:10]}..." if self.api_key else "   No API key")
             print(f"   Private key length: {len(self.api_secret)} chars")
             print("   Make sure KALSHI_API_SECRET is your full RSA private key including -----BEGIN/END----- markers")
-            self.use_sdk = False
+            print("\nFull error details:")
+            import traceback
+            traceback.print_exc()
+            raise RuntimeError(f"Failed to initialize Kalshi SDK: {e}")
     
     def _make_request(self, method: str, endpoint: str, **kwargs) -> Dict:
         """
