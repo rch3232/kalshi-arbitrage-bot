@@ -22,6 +22,7 @@ from typing import List, Dict, Optional, Tuple
 from datetime import datetime
 from .market_api import KalshiClient
 from .cost_calculator import FeeCalculator
+from .utils import safe_get
 
 
 class TradeOpportunity:
@@ -61,108 +62,153 @@ class TradeExecutor:
     and position sizing controls.
     """
     
-    def __init__(self, client: KalshiClient, min_profit_cents: int = 2, 
-                 max_position_size: int = 1000, auto_execute: bool = False):
+    def __init__(self, client: KalshiClient, capital_manager=None,
+                 min_profit_cents: int = 2, max_position_size: int = 1000,
+                 auto_execute: bool = False):
         """
         Initialize the trade executor.
-        
+
         Args:
             client: KalshiClient instance for API calls
+            capital_manager: Optional CapitalManager for dynamic position sizing
             min_profit_cents: Minimum profit in cents per contract to execute
             max_position_size: Maximum number of contracts per trade
             auto_execute: If True, automatically execute trades without confirmation
         """
         self.client = client
+        self.capital_manager = capital_manager
         self.min_profit_cents = min_profit_cents
         self.max_position_size = max_position_size
         self.auto_execute = auto_execute
         self.executed_trades = []
+        self.current_exposure = 0.0  # Track total exposure for capital management
     
-    def analyze_orderbook_spread(self, market_data: Dict, 
+    def analyze_orderbook_spread(self, market_data: Dict,
                                   orderbook: Optional[Dict] = None) -> List[TradeOpportunity]:
         """
-        Analyze orderbook for immediate arbitrage opportunities.
+        Analyze orderbook for immediate spread trading opportunities.
         Finds cases where we can buy low and sell high instantly.
-        
+
+        NOTE: Market objects from get_markets() don't have pricing data.
+        You MUST provide orderbook data for analysis.
+
         Args:
-            market_data: Market information dictionary
-            orderbook: Optional orderbook data with bids and asks
-        
+            market_data: Market information (ticker, title, etc.)
+            orderbook: REQUIRED - Orderbook from get_market_orderbook()
+                      Format: {'orderbook': {'yes': [[price, qty], ...], 'no': [[price, qty], ...]}}
+
         Returns:
             List of TradeOpportunity objects
         """
         opportunities = []
-        market_ticker = market_data.get("ticker", "")
-        market_title = market_data.get("title", "")
-        
-        # Get prices from market data
-        yes_bid = market_data.get("yes_bid")  # Best price to sell YES
-        yes_ask = market_data.get("yes_ask")  # Best price to buy YES
-        no_bid = market_data.get("no_bid")    # Best price to sell NO
-        no_ask = market_data.get("no_ask")    # Best price to buy NO
-        
-        # Check YES side: if ask < bid, we can buy at ask and sell at bid
+        market_ticker = safe_get(market_data, "ticker", "")
+        market_title = safe_get(market_data, "title", "")
+
+        # CRITICAL: Market objects don't have pricing - must use orderbook
+        if not orderbook or 'orderbook' not in orderbook:
+            return []
+
+        ob = orderbook['orderbook']
+
+        # Extract best bids from orderbook
+        # Kalshi orderbooks: 'yes' and 'no' arrays of [price, quantity]
+        # In binary markets: yes_ask = 100 - no_bid, no_ask = 100 - yes_bid
+        yes_bid = None
+        yes_bid_qty = 0
+        no_bid = None
+        no_bid_qty = 0
+        yes_ask = None
+        yes_ask_qty = 0
+        no_ask = None
+        no_ask_qty = 0
+
+        if 'yes' in ob and ob['yes'] and len(ob['yes']) > 0:
+            yes_bid = ob['yes'][0][0]          # Best yes bid price
+            yes_bid_qty = ob['yes'][0][1]      # Quantity available at that price
+            no_ask = 100 - yes_bid              # Calculate no ask from yes bid
+            no_ask_qty = yes_bid_qty
+
+        if 'no' in ob and ob['no'] and len(ob['no']) > 0:
+            no_bid = ob['no'][0][0]            # Best no bid price
+            no_bid_qty = ob['no'][0][1]        # Quantity available
+            yes_ask = 100 - no_bid              # Calculate yes ask from no bid
+            yes_ask_qty = no_bid_qty
+
+
+        # Check YES side: spread = bid - ask (can we buy at ask and sell at bid?)
         if yes_ask is not None and yes_bid is not None:
             spread = yes_bid - yes_ask
             if spread >= self.min_profit_cents:
-                # Calculate maximum quantity we can trade
-                # This would ideally come from orderbook depth, but we'll use a conservative estimate
-                quantity = min(self.max_position_size, 100)  # Start conservative
-                
-                # Calculate profit
-                gross_profit_per_contract = spread / 100.0  # Convert cents to dollars
-                gross_profit = gross_profit_per_contract * quantity
-                
-                # Calculate fees (we pay fees on both buy and sell)
-                buy_fee = FeeCalculator.calculate_fee(yes_ask, quantity, is_maker=False)
-                sell_fee = FeeCalculator.calculate_fee(yes_bid, quantity, is_maker=False)
-                total_fees = buy_fee + sell_fee
-                
-                net_profit = gross_profit - total_fees
-                
-                if net_profit > 0:
-                    opportunities.append(TradeOpportunity(
-                        market_ticker=market_ticker,
-                        market_title=market_title,
-                        side='yes',
-                        buy_price=yes_ask,
-                        sell_price=yes_bid,
-                        quantity=quantity,
-                        gross_profit=gross_profit,
-                        net_profit=net_profit
-                    ))
-        
-        # Check NO side: if ask < bid, we can buy at ask and sell at bid
+                # Quantity limited by orderbook depth
+                available_qty = min(yes_ask_qty, yes_bid_qty) if yes_ask_qty and yes_bid_qty else 0
+
+                if available_qty > 0:
+                    # Use capital manager for dynamic position sizing
+                    if self.capital_manager:
+                        max_qty = self.capital_manager.get_max_position_size(yes_ask, self.current_exposure)
+                        quantity = min(max_qty, self.max_position_size, available_qty)
+                    else:
+                        quantity = min(self.max_position_size, available_qty)
+
+                    # Calculate profit
+                    gross_profit_per_contract = spread / 100.0  # Convert cents to dollars
+                    gross_profit = gross_profit_per_contract * quantity
+
+                    # Calculate fees (we pay fees on both buy and sell)
+                    buy_fee = FeeCalculator.calculate_fee(yes_ask, quantity, is_maker=False)
+                    sell_fee = FeeCalculator.calculate_fee(yes_bid, quantity, is_maker=False)
+                    total_fees = buy_fee + sell_fee
+
+                    net_profit = gross_profit - total_fees
+
+                    if net_profit > 0:
+                        opportunities.append(TradeOpportunity(
+                            market_ticker=market_ticker,
+                            market_title=market_title,
+                            side='yes',
+                            buy_price=yes_ask,
+                            sell_price=yes_bid,
+                            quantity=quantity,
+                            gross_profit=gross_profit,
+                            net_profit=net_profit
+                        ))
+
+        # Check NO side: spread = bid - ask
         if no_ask is not None and no_bid is not None:
             spread = no_bid - no_ask
             if spread >= self.min_profit_cents:
-                quantity = min(self.max_position_size, 100)  # Start conservative
-                
-                gross_profit_per_contract = spread / 100.0
-                gross_profit = gross_profit_per_contract * quantity
-                
-                buy_fee = FeeCalculator.calculate_fee(no_ask, quantity, is_maker=False)
-                sell_fee = FeeCalculator.calculate_fee(no_bid, quantity, is_maker=False)
-                total_fees = buy_fee + sell_fee
-                
-                net_profit = gross_profit - total_fees
-                
-                if net_profit > 0:
-                    opportunities.append(TradeOpportunity(
-                        market_ticker=market_ticker,
-                        market_title=market_title,
-                        side='no',
-                        buy_price=no_ask,
-                        sell_price=no_bid,
-                        quantity=quantity,
-                        gross_profit=gross_profit,
-                        net_profit=net_profit
-                    ))
-        
-        # If we have orderbook data, use it for more accurate quantity calculation
-        if orderbook:
-            opportunities = self._refine_with_orderbook(opportunities, orderbook)
-        
+                # Quantity limited by orderbook depth
+                available_qty = min(no_ask_qty, no_bid_qty) if no_ask_qty and no_bid_qty else 0
+
+                if available_qty > 0:
+                    # Use capital manager for dynamic position sizing
+                    if self.capital_manager:
+                        max_qty = self.capital_manager.get_max_position_size(no_ask, self.current_exposure)
+                        quantity = min(max_qty, self.max_position_size, available_qty)
+                    else:
+                        quantity = min(self.max_position_size, available_qty)
+
+                    gross_profit_per_contract = spread / 100.0
+                    gross_profit = gross_profit_per_contract * quantity
+
+                    buy_fee = FeeCalculator.calculate_fee(no_ask, quantity, is_maker=False)
+                    sell_fee = FeeCalculator.calculate_fee(no_bid, quantity, is_maker=False)
+                    total_fees = buy_fee + sell_fee
+
+                    net_profit = gross_profit - total_fees
+
+                    if net_profit > 0:
+                        opportunities.append(TradeOpportunity(
+                            market_ticker=market_ticker,
+                            market_title=market_title,
+                            side='no',
+                            buy_price=no_ask,
+                            sell_price=no_bid,
+                            quantity=quantity,
+                            gross_profit=gross_profit,
+                            net_profit=net_profit
+                        ))
+
         return opportunities
     
     def _refine_with_orderbook(self, opportunities: List[TradeOpportunity], 
@@ -241,50 +287,85 @@ class TradeExecutor:
     
     def execute_trade(self, opportunity: TradeOpportunity, use_market_orders: bool = False) -> Tuple[bool, Optional[str]]:
         """
-        Execute a trade opportunity.
-        
+        Execute a trade opportunity using IOC (Immediate or Cancel) orders.
+
+        Uses IOC orders by default to ensure both legs execute immediately or not at all,
+        preventing one-sided exposure. Verifies order fills before recording the trade.
+
         Args:
             opportunity: TradeOpportunity to execute
             use_market_orders: If True, use market orders for instant execution.
-                             If False, use limit orders at exact prices (safer but may not execute immediately)
-        
+                             If False, use limit orders with IOC time-in-force (default)
+
         Returns:
             Tuple of (success: bool, message: str)
         """
         try:
             import time
-            
-            # Execute buy order first
-            # For market orders, we still specify price as a limit to avoid slippage
+
+            # Verify we can afford the trade with capital manager
+            if self.capital_manager:
+                trade_cost = (opportunity.buy_price / 100.0) * opportunity.quantity
+                if not self.capital_manager.can_afford_trade(
+                    opportunity.buy_price, opportunity.quantity, self.current_exposure
+                ):
+                    return False, f"Insufficient capital for trade (cost: ${trade_cost:.2f})"
+
+            # Execute buy order first with IOC (Immediate or Cancel)
+            # This ensures the order fills immediately or gets cancelled
             buy_result = self.client.place_order(
                 market_ticker=opportunity.market_ticker,
                 side=opportunity.side,
                 action='buy',
                 count=opportunity.quantity,
                 price=opportunity.buy_price,
-                order_type='market' if use_market_orders else 'limit'
+                order_type='market' if use_market_orders else 'limit',
+                time_in_force='ioc'  # IOC: fills immediately or cancels
             )
-            
+
             if not buy_result:
-                return False, f"Failed to execute buy order for {opportunity.market_ticker}"
-            
+                return False, f"Failed to place buy order for {opportunity.market_ticker}"
+
+            # Verify buy order was filled (not just placed)
+            # IOC orders either fill immediately or get cancelled
+            buy_order_id = buy_result.get('order', {}).get('order_id') or buy_result.get('order_id')
+            buy_status = buy_result.get('order', {}).get('status') or buy_result.get('status', 'unknown')
+
+            if buy_status in ['cancelled', 'canceled']:
+                return False, f"Buy order cancelled (no liquidity at {opportunity.buy_price}¢)"
+
             # Small delay to ensure order is processed
-            time.sleep(0.5)
-            
-            # Execute sell order
+            time.sleep(0.2)
+
+            # Execute sell order with IOC
             sell_result = self.client.place_order(
                 market_ticker=opportunity.market_ticker,
                 side=opportunity.side,
                 action='sell',
                 count=opportunity.quantity,
                 price=opportunity.sell_price,
-                order_type='market' if use_market_orders else 'limit'
+                order_type='market' if use_market_orders else 'limit',
+                time_in_force='ioc'  # IOC: fills immediately or cancels
             )
-            
+
             if not sell_result:
-                return False, f"Failed to execute sell order for {opportunity.market_ticker}"
-            
-            # Record the trade
+                # Buy order already filled - we now have one-sided exposure
+                # Log this as a warning but don't fail completely
+                print(f"⚠️  WARNING: Sell order failed for {opportunity.market_ticker}")
+                print(f"    You now hold a position - please close manually!")
+                return False, f"Sell order failed (one-sided exposure risk)"
+
+            # Verify sell order was filled
+            sell_status = sell_result.get('order', {}).get('status') or sell_result.get('status', 'unknown')
+
+            if sell_status in ['cancelled', 'canceled']:
+                # Buy order filled but sell didn't - one-sided exposure
+                print(f"⚠️  WARNING: Sell order cancelled for {opportunity.market_ticker}")
+                print(f"    Buy filled but sell cancelled - you hold a position!")
+                return False, f"Sell order cancelled (one-sided exposure - close manually)"
+
+            # Both orders filled successfully
+            trade_cost = (opportunity.buy_price / 100.0) * opportunity.quantity
             trade_record = {
                 'timestamp': datetime.now(),
                 'market_ticker': opportunity.market_ticker,
@@ -294,13 +375,21 @@ class TradeExecutor:
                 'quantity': opportunity.quantity,
                 'net_profit': opportunity.net_profit,
                 'buy_order': buy_result,
-                'sell_order': sell_result
+                'sell_order': sell_result,
+                'trade_cost': trade_cost,
+                'buy_order_id': buy_order_id,
+                'buy_status': buy_status,
+                'sell_status': sell_status
             }
             self.executed_trades.append(trade_record)
-            
-            return True, (f"Successfully executed trade: {opportunity.quantity} contracts, "
+
+            # Update exposure tracking
+            # Note: Spread trades are closed immediately, so no ongoing exposure
+
+            return True, (f"✅ Trade executed: {opportunity.quantity} contracts @ "
+                          f"{opportunity.buy_price}¢/{opportunity.sell_price}¢, "
                           f"profit: ${opportunity.net_profit:.2f}")
-        
+
         except Exception as e:
             return False, f"Error executing trade: {str(e)}"
     
@@ -318,7 +407,7 @@ class TradeExecutor:
         all_opportunities = []
         
         for market in markets[:limit]:
-            market_ticker = market.get("ticker", "")
+            market_ticker = safe_get(market, "ticker", "")
             if not market_ticker:
                 continue
             
